@@ -1,0 +1,106 @@
+#Đặt lại các biến
+rm(list=ls())
+
+#Thêm các thư viên cần thiết
+library(MultiBD)
+library(xlsx)
+library(mvtnorm)
+library(ggplot2)
+
+#Nhập dữ liệu từ file
+mydata <- read.xlsx("d:/Learning/KH192/MHH/Assignment/data.xlsx", sheetName = "Sheet1")
+
+#Biến ngẫu nhiên X quan sát số ca mắc bệnh và số ca hồi phục tại từng thời điểm
+X <- c(1:(nrow(mydata) - 1))
+for(i in 1:(nrow(mydata) -1)){
+  X[i] = mydata$I[i] + mydata$R[i]
+}
+
+N <- mydata$S[1] + mydata$I[1] + mydata$R[1]
+#Các hệ số Beta qua tại thời điểm t
+Beta <- c(1:(nrow(mydata) - 1))
+for(i in 1:(nrow(mydata) - 1)){
+  Beta[i] <- (N*(mydata$S[i] - mydata$S[i + 1]))/(mydata$I[i]*mydata$S[i])
+}
+
+#Các hệ số Gamma qua tại thời điểm t
+Gamma <- c(1:(nrow(mydata) - 1))
+for(i in 1:nrow(mydata) - 1){
+  #Gamma[i] <- (mydata$I[i] + (Beta[i]/N)*mydata$I[i]*mydata$S[i] - mydata$I[i + 1])/(mydata$I[i])
+  Gamma[i] <- (mydata$R[i+1] - mydata$R[i])/mydata$I[i]
+}
+
+#Tạo mẫu chứa thông tin bao gồm X, Beta, Gamma
+mysample <- data.frame(X,Beta,Gamma)
+
+#Giả sử rằng Beta, Gamma mang phân bố xác suất Gamma (Gamma Distribution)
+pi_Beta <- function(x){
+    mean <- mean(Beta)
+    sd <- sd(Beta)
+    lamda <- (mean/sd)
+    alpha <- mean*lamda
+    return(dgamma(x, shape = alpha, rate = lamda))
+}
+pi_Gamma <- function(x){
+  mean <- mean(Gamma)
+  sd <- sd(Gamma)
+  lamda <- (mean/sd)
+  alpha <- mean*lamda
+  return(dgamma(x, shape = alpha, rate = lamda))
+}
+#Giả sử phân bố xác suất bất kỳ là phân phối Chuẩn (Normal Distribution)
+p <- function(x_next, x_current) {
+  return(dmvnorm(x = x_next, mean = x_current , sigma = matrix(c(1))))
+}
+
+f <- function(x_current) {
+  x_next <- rmvnorm(n = 1, mean = x_current, sigma = matrix(c(1)))
+  return(x_next)
+}
+
+#Thuật toán Metropolis-Hastings
+MH <- function(pi_B, pi_G, p, f, n, init){
+  # Khởi tạo mẫu trả về
+  Betas <- c(1:n)
+  Gammas <- c(1:n)
+  Betas[1] <- init[1]
+  Gammas[1] <- init[2]
+  for(i in (1:(n-1))){
+    # Lấy điểm hiện tại
+    x_current_beta <- Betas[i]
+    x_current_gamma <- Gammas[i]
+    # Lấy điểm kế tiếp từ phân phối xác suất bất kỳ p
+    t <- sample(1:nrow(mysample),1)
+    x_next_beta <- f(x_current_beta)
+    x_next_gamma <- f(x_current_gamma)
+    # Tính hệ số r
+    alpha1 = (pi_B(x_next_beta)) / (pi_B(x_current_beta))
+    alpha2 = (pi_G(x_next_gamma)) / (pi_G(x_current_gamma))
+    r <- min(1, alpha1, alpha2)
+    
+    # Khởi tạo giá trị q từ phân phối đều liên tục U(0,1)
+    q <- runif(1, 0.0, 1.0)
+    
+    # Xác định điểm kê tiếp
+    if (q < r){
+      Betas[i+1] <- x_next_beta
+      Gammas[i+1] <- x_next_gamma
+    }
+    else {
+      Betas[i+1] <- x_current_beta
+      Gammas[i+1] <- x_current_gamma
+    }
+  }
+  
+  res <- data.frame(Betas, Gammas)
+  return(res)
+}
+
+#Tạo mẫu dựa trên thuật toán MH
+init <- c(mysample$Beta[50],mysample$Gamma[50])
+n <- 10000
+MH_samples <- MH(pi_Beta, pi_Gamma, p, f, n, init)
+ggplot(data = MH_samples,aes(x = Betas, y = Gammas)) + geom_point() + xlab(expression(beta)) + ylab(expression(gamma))
+
+mean(MH_samples$Betas)/mean(MH_samples$Gammas)
+MH_samples
